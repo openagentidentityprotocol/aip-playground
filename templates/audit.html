@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Audit Log{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>Audit Log</h1>
+
+  <div class="aip-box">
+    <strong>Immutable append-only audit trail</strong> (AIP spec requirement).<br>
+    Every tool call — from the web UI <em>and</em> the CLI / MCP agent — is recorded here.
+    Most recent entries shown first.
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Events</h2>
+      <span class="badge-count">{{ records | length }}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Transport</th>
+          <th>Actor</th>
+          <th>Action / Event</th>
+          <th>Outcome</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if records %}
+          {% for r in records %}
+            <tr>
+              <td class="ts">{{ r.ts }}</td>
+              <td>
+                <span class="transport-badge {% if r.transport != 'http' %}mcp{% endif %}">
+                  {{ r.transport | default('mcp') }}
+                </span>
+              </td>
+              <td class="meta">{{ r.actor | default(r.agent_id) | default('') }}</td>
+              <td class="subject">{{ r.action | default(r.tool) | default('') }}</td>
+              <td>
+                <span class="{% if r.outcome == 'allow' %}outcome-allow{% else %}outcome-deny{% endif %}">
+                  {{ r.outcome }}
+                </span>
+              </td>
+              <td class="meta">{{ r.detail | default('') }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="6" style="text-align:center;color:#94a3b8;padding:2rem">
+              No audit records yet.
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

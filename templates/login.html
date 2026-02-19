@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="logo">AIP <span>Email</span></div>
+    <div class="subtitle">Agent Identity Protocol demo</div>
+
+    {% if error %}
+      <div class="error-box">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text"
+             placeholder="alice / bob / admin" autofocus>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password"
+             placeholder="password">
+
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+
+    <div class="hint">
+      Demo accounts:
+      <code>alice / alice123</code> &nbsp;·&nbsp;
+      <code>bob / bob123</code> &nbsp;·&nbsp;
+      <code>admin / admin123</code>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AIP Email Demo{% endblock %} — AIP Email Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <nav>
+    <div class="brand">AIP <span>Email Demo</span></div>
+    {% if user %}
+      <a href="/inbox">Inbox</a>
+      {% if user.role == "admin" %}
+        <a href="/admin">All Emails</a>
+        <a href="/audit">Audit Log</a>
+      {% endif %}
+      <a href="/logout">Log out</a>
+    {% endif %}
+    <div class="spacer"></div>
+    {% if user %}
+      <div class="user-pill">
+        {{ user.name }}
+        <span class="role-badge {% if user.role == 'admin' %}admin{% endif %}">
+          {{ user.role }}
+        </span>
+      </div>
+    {% endif %}
+  </nav>
+
+  {% block content %}{% endblock %}
+
+</body>
+</html>

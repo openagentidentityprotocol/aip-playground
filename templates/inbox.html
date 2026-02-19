@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Inbox{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>Inbox</h1>
+
+  <div class="aip-box">
+    <strong>Browser session active</strong> — server-side session verified (no AAT for human users).<br>
+    User: <code>{{ user.id }}</code> &nbsp;·&nbsp;
+    Role: <code>{{ user.role }}</code><br>
+    Data isolation: showing only emails addressed to <code>{{ user.email }}</code>.
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Your emails</h2>
+      <span class="badge-count">{{ emails | length }}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>From</th>
+          <th>Subject</th>
+          <th>Body</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if emails %}
+          {% for email in emails %}
+            <tr>
+              <td class="ts">{{ email.timestamp }}</td>
+              <td class="meta">{{ email.from }}</td>
+              <td class="subject">{{ email.subject }}</td>
+              <td class="meta">{{ email.body }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="4" style="text-align:center;color:#94a3b8;padding:2rem">
+              No emails found.
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

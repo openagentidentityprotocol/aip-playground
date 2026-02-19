@@ -1,0 +1,216 @@
+/* AIP Email Demo — global stylesheet */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    min-height: 100vh;
+}
+
+/* ── Navigation ─────────────────────────────────────────────── */
+
+nav {
+    background: #1a1a2e;
+    color: #fff;
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    height: 52px;
+}
+
+nav .brand { font-weight: 700; font-size: 1rem; letter-spacing: .02em; }
+nav .brand span { color: #60a5fa; }
+nav a { color: #cbd5e1; text-decoration: none; font-size: .9rem; }
+nav a:hover { color: #fff; }
+nav .spacer { flex: 1; }
+
+nav .user-pill {
+    background: #2d3748;
+    border-radius: 999px;
+    padding: .25rem .85rem;
+    font-size: .82rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+nav .role-badge {
+    background: #3b82f6;
+    border-radius: 999px;
+    padding: .1rem .5rem;
+    font-size: .72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+nav .role-badge.admin { background: #7c3aed; }
+
+/* ── Layout ──────────────────────────────────────────────────── */
+
+.container { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; }
+h1 { font-size: 1.4rem; margin-bottom: 1.25rem; color: #1a1a2e; }
+h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #374151; }
+
+/* ── Card ────────────────────────────────────────────────────── */
+
+.card {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    overflow: hidden;
+}
+
+.card-header {
+    padding: .85rem 1.25rem;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+}
+.card-header h2 { margin: 0; }
+
+.badge-count {
+    background: #e0e7ff;
+    color: #3730a3;
+    border-radius: 999px;
+    padding: .1rem .55rem;
+    font-size: .78rem;
+    font-weight: 600;
+}
+
+/* ── Table ───────────────────────────────────────────────────── */
+
+table { width: 100%; border-collapse: collapse; }
+
+th {
+    text-align: left;
+    padding: .65rem 1.25rem;
+    font-size: .78rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: #64748b;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+td { padding: .8rem 1.25rem; border-bottom: 1px solid #f1f5f9; font-size: .9rem; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f8fafc; }
+
+.subject { font-weight: 600; color: #1e293b; }
+.meta    { color: #64748b; font-size: .82rem; }
+.ts      { color: #94a3b8; font-size: .78rem; white-space: nowrap; }
+
+/* ── Status badges ───────────────────────────────────────────── */
+
+.outcome-allow {
+    background: #dcfce7; color: #166534;
+    border-radius: 999px; padding: .15rem .6rem;
+    font-size: .76rem; font-weight: 600;
+}
+.outcome-deny {
+    background: #fee2e2; color: #991b1b;
+    border-radius: 999px; padding: .15rem .6rem;
+    font-size: .76rem; font-weight: 600;
+}
+
+.transport-badge {
+    background: #e0f2fe; color: #0369a1;
+    border-radius: 999px; padding: .15rem .6rem;
+    font-size: .76rem;
+}
+.transport-badge.mcp {
+    background: #fef3c7; color: #92400e;
+}
+
+/* ── Login page ──────────────────────────────────────────────── */
+
+.login-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 52px);
+}
+
+.login-card {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.10);
+    padding: 2.5rem 2.5rem 2rem;
+    width: 360px;
+}
+
+.login-card .logo {
+    font-size: 1.5rem; font-weight: 800; color: #1a1a2e;
+    margin-bottom: .25rem;
+}
+.login-card .logo span { color: #3b82f6; }
+.login-card .subtitle  { color: #64748b; font-size: .88rem; margin-bottom: 2rem; }
+
+label {
+    display: block;
+    font-size: .84rem; font-weight: 600; color: #374151;
+    margin-bottom: .35rem;
+}
+
+input[type=text],
+input[type=password] {
+    width: 100%; padding: .6rem .85rem;
+    border: 1px solid #d1d5db; border-radius: 7px;
+    font-size: .95rem; margin-bottom: 1.1rem;
+    outline: none; transition: border .15s;
+}
+input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+}
+
+.btn {
+    width: 100%; padding: .7rem;
+    background: #1a1a2e; color: #fff;
+    border: none; border-radius: 7px;
+    font-size: .95rem; font-weight: 600;
+    cursor: pointer; transition: background .15s;
+}
+.btn:hover { background: #2d3748; }
+
+.error-box {
+    background: #fef2f2; color: #b91c1c;
+    border: 1px solid #fecaca;
+    border-radius: 7px; padding: .6rem .85rem;
+    font-size: .86rem; margin-bottom: 1rem;
+}
+
+.hint {
+    margin-top: 1.25rem; padding-top: 1.25rem;
+    border-top: 1px solid #f1f5f9;
+    font-size: .8rem; color: #94a3b8;
+}
+.hint code {
+    background: #f1f5f9; padding: .1em .4em;
+    border-radius: 4px; font-size: .88em;
+}
+
+/* ── AIP info box ────────────────────────────────────────────── */
+
+.aip-box {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    padding: .85rem 1.1rem;
+    margin-bottom: 1.25rem;
+    font-size: .84rem;
+    color: #1e40af;
+    line-height: 1.6;
+}
+.aip-box strong { font-weight: 700; }
+.aip-box code {
+    background: #dbeafe;
+    padding: .1em .4em;
+    border-radius: 4px;
+    font-size: .9em;
+}
