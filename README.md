@@ -108,7 +108,7 @@ python3 main.py --demo invalid    # forged token → denied
 
 ## AAT claims
 
-An AAT is issued by an **agent** (not a human) — for example, by `main.py` or a custom agent calling `issue_aat()`.  Human browser logins do **not** produce an AAT.
+An AAT is issued by an **agent** or registry to authenticate an agent (not a human) — for example, by `main.py` or a custom agent calling `issue_aat()`.  Human browser logins do **not** produce an AAT.
 
 ```json
 {
@@ -146,6 +146,8 @@ Browser and API events share the same `audit.jsonl` file, distinguished by `tran
 
 - `actor` is the **user ID** for browser events and the **agent ID** for API/MCP events.
 - `transport: "http"` covers both browser page views and direct API calls; `transport: "mcp"` is the MCP server path.
+
+TODO: Handl the point when agents are doing browser based actions.
 
 ## MCP server → web server: AAT vs session
 
