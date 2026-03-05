@@ -1,2 +1,5 @@
 .venv
 .claude
+audit.jsonl
+__pycache__
+*.pyc
