@@ -53,6 +53,10 @@ import json
 import os
 import sys
 import datetime
+
+# Ensure auth.py / data.py are importable when launched from any working
+# directory (e.g. by Claude Desktop, Cursor, or another MCP host).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import urllib.error
 import urllib.request
 from typing import Any, Optional

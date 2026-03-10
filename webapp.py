@@ -27,18 +27,20 @@ Run:
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import os
+import uuid
 from typing import Optional
 
-from fastapi import FastAPI, Form, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Form, Request, Response, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from auth import AuthError, check_capability, check_role, validate_aat
+from auth import AuthError, check_capability, check_role, issue_aat, validate_aat
 from data import USERS, authenticate_user, get_all_emails, get_emails_for_user
 
 # ---------------------------------------------------------------------------
@@ -60,7 +62,7 @@ AUDIT_LOG_PATH = "audit.jsonl"
 # ---------------------------------------------------------------------------
 
 
-def _audit(event: str, actor: str, action: str, outcome: str, detail: str = "") -> None:
+def _audit(event: str, actor: str, action: str, outcome: str, detail: str = "", transport: str = "http") -> None:
     record = {
         "ts": datetime.datetime.utcnow().isoformat() + "Z",
         "event": event,
@@ -68,7 +70,7 @@ def _audit(event: str, actor: str, action: str, outcome: str, detail: str = "") 
         "action": action,
         "outcome": outcome,
         "detail": detail,
-        "transport": "http",
+        "transport": transport,
     }
     with open(AUDIT_LOG_PATH, "a") as f:
         f.write(json.dumps(record) + "\n")
@@ -312,3 +314,221 @@ async def api_list_all_emails(request: Request):
     _audit("api_call", actor=claims.get("agent_id", "?"),
            action="api:list_all_emails", outcome="allow", detail="role=admin")
     return JSONResponse({"emails": emails, "count": len(emails)})
+
+
+# ---------------------------------------------------------------------------
+# MCP over HTTP — SSE transport
+#
+# Exposes the same AIP-enforced tools as mcp_server.py but over HTTP/SSE
+# so Claude Desktop, Cursor, and other MCP clients can connect via URL
+# instead of spawning a subprocess.
+#
+# Connection flow:
+#   1. Client opens GET /mcp  → receives SSE stream
+#   2. Server sends: event: endpoint / data: /mcp/messages?sessionId=<id>
+#   3. Client POSTs JSON-RPC messages to /mcp/messages?sessionId=<id>
+#   4. Server pushes JSON-RPC responses back through the SSE stream
+#
+# Tools:
+#   authenticate      — AIP Layer 1: validates credentials, issues a signed AAT
+#   list_my_emails    — AIP Layer 2: validates AAT, enforces read:own_emails
+#   list_all_emails   — AIP Layer 2: validates AAT, enforces read:all_emails + admin
+#
+# Config (Claude Desktop / Cursor):
+#   "aip-email": { "url": "http://localhost:8000/aip-playground-mcp" }
+# ---------------------------------------------------------------------------
+
+_mcp_sessions: dict = {}  # session_id -> asyncio.Queue
+
+MCP_TOOLS = [
+    {
+        "name": "authenticate",
+        "description": (
+            "Authenticate a user and receive an Agent Authentication Token (AAT). "
+            "Call this first — the token is required by all other tools. "
+            "AIP Layer 1: issues a signed JWT scoped to the user's role and capabilities. "
+            "Available users: alice (user), bob (user), admin (admin)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "username": {"type": "string", "description": "Username"},
+                "password": {"type": "string", "description": "Password"},
+                "agent_name": {"type": "string", "description": "Label for this agent session (optional)"},
+            },
+            "required": ["username", "password"],
+        },
+    },
+    {
+        "name": "list_my_emails",
+        "description": (
+            "List emails for the authenticated user. "
+            "AIP Layer 2: validates the AAT and enforces read:own_emails capability. "
+            "Returns only emails addressed to the token subject."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "aat": {"type": "string", "description": "AAT returned by the authenticate tool"},
+            },
+            "required": ["aat"],
+        },
+    },
+    {
+        "name": "list_all_emails",
+        "description": (
+            "List every email in the system. Admin role required. "
+            "AIP Layer 2: validates the AAT and enforces read:all_emails + admin role."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "aat": {"type": "string", "description": "Admin AAT returned by the authenticate tool"},
+            },
+            "required": ["aat"],
+        },
+    },
+]
+
+
+def _mcp_tool_call(tool_name: str, args: dict) -> dict:
+    """Dispatch an MCP tool call with full AIP enforcement."""
+
+    if tool_name == "authenticate":
+        username = args.get("username", "")
+        password = args.get("password", "")
+        agent_name = args.get("agent_name", "claude-agent")
+        user = authenticate_user(username, password)
+        if not user:
+            raise ValueError("invalid username or password")
+        caps = ["read:own_emails"]
+        if user["role"] == "admin":
+            caps.append("read:all_emails")
+        # AIP Layer 1: issue a signed AAT for the agent
+        aat = issue_aat(agent_name, user["id"], user["role"], caps)
+        _audit("tool_call", agent_name, "authenticate", "allow",
+               f"user={username} role={user['role']}", transport="mcp-http")
+        return {
+            "aat": aat,
+            "role": user["role"],
+            "user": user["name"],
+            "capabilities": caps,
+            "message": (
+                f"Authenticated as {user['name']} ({user['role']}). "
+                "Pass the 'aat' value to list_my_emails or list_all_emails."
+            ),
+        }
+
+    if tool_name == "list_my_emails":
+        aat = args.get("aat", "")
+        # AIP Layer 2: validate token and enforce capability
+        claims = validate_aat(aat)
+        check_capability(claims, "read:own_emails")
+        user_id = claims.get("sub")
+        user = USERS.get(user_id, {})
+        emails = get_emails_for_user(user.get("email", ""))
+        _audit("tool_call", claims.get("agent_id", "?"), "list_my_emails", "allow",
+               f"user={user_id}", transport="mcp-http")
+        return {"emails": emails, "count": len(emails)}
+
+    if tool_name == "list_all_emails":
+        aat = args.get("aat", "")
+        # AIP Layer 2: validate token, enforce capability and role
+        claims = validate_aat(aat)
+        check_capability(claims, "read:all_emails")
+        check_role(claims, "admin")
+        emails = get_all_emails()
+        _audit("tool_call", claims.get("agent_id", "?"), "list_all_emails", "allow",
+               "role=admin", transport="mcp-http")
+        return {"emails": emails, "count": len(emails)}
+
+    raise ValueError(f"unknown tool '{tool_name}'")
+
+
+def _mcp_dispatch(body: dict) -> Optional[dict]:
+    """JSON-RPC 2.0 dispatcher for MCP requests."""
+    rid = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0", "id": rid,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "aip-email-mcp", "version": "0.1.0"},
+            },
+        }
+
+    if method == "notifications/initialized":
+        return None  # notification — no response needed
+
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": rid, "result": {"tools": MCP_TOOLS}}
+
+    if method == "tools/call":
+        tool_name = params.get("name")
+        tool_args = params.get("arguments", {})
+        try:
+            result = _mcp_tool_call(tool_name, tool_args)
+            return {
+                "jsonrpc": "2.0", "id": rid,
+                "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]},
+            }
+        except AuthError as exc:
+            _audit("tool_call", "?", tool_name or "?", "deny", str(exc), transport="mcp-http")
+            return {"jsonrpc": "2.0", "id": rid,
+                    "error": {"code": -32001, "message": f"AIP policy denied: {exc}"}}
+        except Exception as exc:
+            return {"jsonrpc": "2.0", "id": rid,
+                    "error": {"code": -32603, "message": str(exc)}}
+
+    return {"jsonrpc": "2.0", "id": rid,
+            "error": {"code": -32601, "message": f"method not found: {method}"}}
+
+
+@app.get("/aip-playground-mcp")
+async def mcp_sse(request: Request):
+    """
+    SSE endpoint — MCP clients open a persistent connection here.
+    The server immediately sends the POST endpoint URL, then streams
+    JSON-RPC responses as the client sends requests.
+    """
+    session_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _mcp_sessions[session_id] = queue
+
+    async def stream():
+        # Tell the client where to POST messages for this session
+        yield f"event: endpoint\ndata: /aip-playground-mcp/messages?sessionId={session_id}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"data: {json.dumps(msg)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"  # keepalive comment
+        finally:
+            _mcp_sessions.pop(session_id, None)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/aip-playground-mcp/messages")
+async def mcp_messages(request: Request, sessionId: str):
+    """Receive JSON-RPC messages from the MCP client and push responses to the SSE stream."""
+    session_queue = _mcp_sessions.get(sessionId)
+    if not session_queue:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    body = await request.json()
+    response = _mcp_dispatch(body)
+    if response is not None:
+        await session_queue.put(response)
+    return Response(status_code=202)
