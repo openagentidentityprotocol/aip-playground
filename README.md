@@ -13,9 +13,10 @@ in action — with both a **CLI demo** and a **web UI**.
 | **Role-based data isolation** — user sees only own emails; admin sees all | `mcp_server.py`, `webapp.py` |
 | **Capability checks** — tokens carry explicit capability claims | `auth.py` |
 | **Immutable audit log** — every allow/deny appended to `audit.jsonl` | `mcp_server.py`, `webapp.py` |
-| **Transport-agnosticism** — AAT works over MCP stdio *and* HTTP Bearer token | `auth.py` |
+| **Transport-agnosticism** — AAT works over stdio, HTTP Bearer, and MCP-over-HTTP | `auth.py` |
 | **MCP stdio transport** — agent interface speaks JSON-RPC 2.0 | `mcp_server.py` |
-| **Separate auth paths** — human browser session vs. agent Bearer token are distinct | `webapp.py` |
+| **MCP over HTTP/SSE** — Claude Desktop / Cursor connect via URL, no subprocess | `webapp.py` |
+| **Separate auth paths** — human browser session vs. agent AAT are distinct | `webapp.py` |
 
 ## Architecture
 
@@ -25,31 +26,36 @@ in action — with both a **CLI demo** and a **web UI**.
                         ┌──────┴──────┐
                         │             │
               mcp_server.py       webapp.py
-           (AIP Layer 2 for    ┌── Browser routes ──────────────────┐
-            MCP stdio agents)  │  plain session {user_id, role}     │
-                        │      │  no AAT — humans are not agents     │
-                   main.py     ├── JSON API routes (/api/*) ─────────┤
-                (CLI demo)     │  Authorization: Bearer <aat>        │
-                               │  AIP Layer 2 enforcement            │
-                               └─────────────────────────────────────┘
+           (AIP Layer 2 for    ┌── Browser routes ──────────────────────┐
+            MCP stdio agents)  │  plain session {user_id, role}         │
+                        │      │  no AAT — humans are not agents         │
+                   main.py     ├── JSON API routes (/api/*) ─────────────┤
+                (CLI demo)     │  Authorization: Bearer <aat>            │
+                               │  AIP Layer 2 enforcement                │
+                               ├── MCP over HTTP/SSE (/aip-playground-mcp)┤
+                               │  Claude Desktop / Cursor connect here   │
+                               │  authenticate tool → issues AAT (L1)    │
+                               │  list_* tools → enforce AAT (L2)        │
+                               └─────────────────────────────────────────┘
 ```
 
-**Key insight:** `auth.py` is transport-agnostic. `validate_aat()` /
-`check_capability()` / `check_role()` are called by `mcp_server.py` (AI agents
-over stdio) and by `webapp.py`'s `/api/*` routes (agents/MCP server over HTTP).
-Human browser sessions use a plain `{user_id, role}` record — no AAT involved.
+**Key insight:** `auth.py` is transport-agnostic. The same `validate_aat()` /
+`check_capability()` / `check_role()` functions enforce policy across all three
+agent paths: stdio MCP, HTTP Bearer API, and MCP-over-HTTP/SSE.
 
 ## Files
 
 ```
 .
-├── auth.py          AIP Layer 1: AAT issuance & Layer 2: validation helpers
-├── data.py          In-memory email store and user registry
-├── mcp_server.py    AIP-aware proxy wrapped MCP server (stdio JSON-RPC 2.0 transport)
-├── main.py          CLI demo — runs all four scenarios
-├── webapp.py        FastAPI web UI — browser demo
-├── requirements.txt Web UI dependencies
-└── audit.jsonl      Created at runtime; one JSON line per tool call
+├── auth.py               AIP Layer 1: AAT issuance & Layer 2: validation helpers
+├── data.py               In-memory email store and user registry
+├── mcp_server.py         AIP-aware MCP server (stdio JSON-RPC 2.0 transport)
+├── mcp_server_plain.py   Plain MCP server — no enforcement (baseline / aip-go target)
+├── main.py               CLI demo — runs all four scenarios
+├── webapp.py             FastAPI web UI + JSON API + MCP over HTTP/SSE
+├── requirements.txt      Web UI dependencies
+├── tutorials.md          Step-by-step walkthroughs
+└── audit.jsonl           Created at runtime; one JSON line per event
 ```
 
 ## Quick start
@@ -84,27 +90,45 @@ python3 main.py --demo invalid    # forged token → denied
 
 > The CLI requires no dependencies — plain Python 3.9+.
 
-## Web UI pages
+## Web UI pages and routes
+
+### Browser routes
 
 | Route | Access | Description |
 |---|---|---|
 | `/login` | Public | Login form |
-| `/inbox` | Any authenticated user | Own emails only (AIP data isolation) |
-| `/admin` | Admin role only | All emails across all users |
-| `/audit` | Admin role only | Live audit log — shows both web and CLI/MCP events |
+| `/inbox` | Authenticated user | Own emails only (AIP data isolation) |
+| `/admin` | Admin role | All emails across all users |
+| `/audit` | Admin role | Live audit log — all transports |
+
+### Agent routes
+
+| Route | Auth | Description |
+|---|---|---|
+| `GET /api/emails/mine` | `Bearer <aat>` — `read:own_emails` | JSON API — caller's own emails |
+| `GET /api/emails/all` | `Bearer <aat>` — `read:all_emails` + admin | JSON API — all emails |
+| `GET /aip-playground-mcp` | None (SSE handshake) | MCP over HTTP/SSE — Claude Desktop / Cursor entry point |
+| `POST /aip-playground-mcp/messages?sessionId=<id>` | Per-tool AAT | MCP JSON-RPC messages |
 
 ## Authentication paths
 
-`webapp.py` has two completely separate authentication paths that must not be confused:
+`webapp.py` has three completely separate authentication paths:
 
-### Browser (human) — session cookie
-1. **Login** (`POST /login`) → `authenticate_user()` validates credentials → stores `{user_id, role}` in a signed Starlette session cookie.  No AAT is issued — humans are not agents.
-2. **Every browser route** (`/inbox`, `/admin`, `/audit`) → reads `session["user_id"]`, looks up the user record, checks `user["role"]` directly → allow or redirect to `/login` with an error.
-3. **Every decision** → written to `audit.jsonl` with `actor = user_id`.
+### 1. Browser (human) — session cookie
+1. `POST /login` → `authenticate_user()` validates credentials → stores `{user_id, role}` in a signed session cookie. No AAT issued.
+2. Every browser route reads `session["user_id"]`, checks `user["role"]` directly.
+3. Audit records: `actor = user_id`, `transport = "http"`.
 
-### API (agent / MCP server) — Bearer token
-1. **Every `/api/*` route** → reads `Authorization: Bearer <aat>` header → `validate_aat(aat)` (Layer 2) → `check_capability()` / `check_role()` → allow or `401`/`403`.
-2. **Every decision** → written to `audit.jsonl` with `actor = agent_id` from the AAT claims, tagged `"transport": "mcp"` (when called by `mcp_server.py`) or `"http"` (when called directly).
+### 2. JSON API (agent) — Bearer token
+1. Every `/api/*` route reads `Authorization: Bearer <aat>` → `validate_aat()` → `check_capability()` / `check_role()`.
+2. Audit records: `actor = agent_id`, `transport = "http"`.
+
+### 3. MCP over HTTP/SSE (agent) — per-tool AAT
+1. Client opens `GET /aip-playground-mcp` → receives SSE stream with message endpoint URL.
+2. Client POSTs JSON-RPC to `/aip-playground-mcp/messages?sessionId=<id>`.
+3. `authenticate` tool: validates credentials, calls `issue_aat()` (Layer 1), returns signed AAT.
+4. `list_my_emails` / `list_all_emails`: validate AAT (Layer 2), enforce capability/role.
+5. Audit records: `actor = agent_id`, `transport = "mcp-http"`.
 
 ## AAT claims
 
@@ -137,15 +161,20 @@ An AAT is issued by an **agent** or registry to authenticate an agent (not a hum
 Browser and API events share the same `audit.jsonl` file, distinguished by `transport` and `actor`:
 
 ```jsonl
-{"ts":"2025-01-14T12:00:00Z","event":"login","actor":"alice","action":"login","outcome":"allow","detail":"role=user","transport":"http"}
-{"ts":"2025-01-14T12:00:01Z","event":"page_view","actor":"alice","action":"inbox","outcome":"allow","detail":"emails=2","transport":"http"}
-{"ts":"2025-01-14T12:00:02Z","event":"page_view","actor":"alice","action":"admin","outcome":"deny","detail":"insufficient role","transport":"http"}
-{"ts":"2025-01-14T12:00:03Z","event":"tool_call","actor":"email-assistant-v1","action":"list_my_emails","outcome":"allow","detail":"user=alice","transport":"mcp"}
-{"ts":"2025-01-14T12:00:04Z","event":"api_call","actor":"email-assistant-v1","action":"api:list_my_emails","outcome":"allow","detail":"user=alice","transport":"http"}
+{"ts":"...","event":"login",     "actor":"alice",            "action":"login",           "outcome":"allow","transport":"http"}
+{"ts":"...","event":"page_view", "actor":"alice",            "action":"inbox",           "outcome":"allow","transport":"http"}
+{"ts":"...","event":"page_view", "actor":"alice",            "action":"admin",           "outcome":"deny", "transport":"http"}
+{"ts":"...","event":"tool_call", "actor":"claude-agent",     "action":"authenticate",    "outcome":"allow","transport":"mcp-http"}
+{"ts":"...","event":"tool_call", "actor":"claude-agent",     "action":"list_my_emails",  "outcome":"allow","transport":"mcp-http"}
+{"ts":"...","event":"tool_call", "actor":"email-assistant",  "action":"list_my_emails",  "outcome":"allow","transport":"mcp"}
+{"ts":"...","event":"api_call",  "actor":"email-assistant",  "action":"api:list_my_emails","outcome":"allow","transport":"http"}
 ```
 
-- `actor` is the **user ID** for browser events and the **agent ID** for API/MCP events.
-- `transport: "http"` covers both browser page views and direct API calls; `transport: "mcp"` is the MCP server path.
+| `transport` | Source |
+|---|---|
+| `"http"` | Browser page views and direct `/api/*` calls |
+| `"mcp"` | stdio MCP server (`mcp_server.py`) |
+| `"mcp-http"` | MCP over HTTP/SSE (`/aip-playground-mcp`) |
 
 TODO: Handl the point when agents are doing browser based actions.
 
@@ -155,19 +184,20 @@ This is a critical distinction — the browser session and the agent AAT are **c
 
 ### Humans do not have AATs. Agents do not have sessions.
 
-| | Browser (human) | Agent / MCP server |
-|---|---|---|
-| Identity carrier | Starlette session cookie `{user_id, role}` | `Authorization: Bearer <aat>` |
-| Token issued by | Nothing — session stores plain user record | `issue_aat()` in the agent |
-| Validated by | `_session_user()` — looks up user in `USERS` dict | `validate_aat()` — verifies HMAC signature |
-| Route prefix | `/`, `/inbox`, `/admin`, `/audit` | `/api/*` |
-
-`issue_aat()` is only ever called by agents obtaining their own identity token. `webapp.py` never calls `issue_aat()` — human login just stores the authenticated user's ID in the session.
+| | Browser (human) | JSON API agent | MCP-over-HTTP agent |
+|---|---|---|---|
+| Entry point | `/login` form | `/api/*` | `GET /aip-playground-mcp` |
+| Identity carrier | Session cookie `{user_id, role}` | `Authorization: Bearer <aat>` | AAT via `authenticate` tool |
+| `issue_aat()` called? | Never | By the agent externally | By the `authenticate` tool (Layer 1) |
+| Validated by | `_session_user()` | `_bearer_claims()` + `validate_aat()` | `validate_aat()` per tool call |
+| Audit transport | `"http"` | `"http"` | `"mcp-http"` |
 
 ```
-Browser    → encrypted session cookie  → webapp.py _session_user()  → user dict
-MCP agent  → aat= tool argument        → mcp_server.py validate_aat() → claims
-API client → Authorization: Bearer     → webapp.py _bearer_claims()  → validate_aat() → claims
+Browser        → session cookie          → _session_user()           → user dict
+stdio agent    → aat= tool argument      → mcp_server.py             → validate_aat()
+API client     → Authorization: Bearer   → _bearer_claims()          → validate_aat()
+MCP-HTTP agent → authenticate tool       → issue_aat() [Layer 1]
+               → list_* tools + aat      → validate_aat() [Layer 2]
 ```
 
 ### The MCP server calls the web server

@@ -328,10 +328,12 @@ def main() -> None:
                         if record["outcome"] == "allow"
                         else red(record["outcome"])
                     )
+                    actor = record.get("agent_id") or record.get("actor", "?")
+                    action = record.get("tool") or record.get("action", "?")
                     print(
                         f"  {dim(record['ts'])}  "
-                        f"agent={cyan(record['agent_id'])}  "
-                        f"tool={bold(record['tool'])}  "
+                        f"actor={cyan(actor)}  "
+                        f"action={bold(action)}  "
                         f"outcome={outcome_fmt}  "
                         f"{dim(record.get('detail', ''))}"
                     )

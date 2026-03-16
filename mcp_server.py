@@ -53,6 +53,10 @@ import json
 import os
 import sys
 import datetime
+
+# Ensure auth.py / data.py are importable when launched from any working
+# directory (e.g. by Claude Desktop, Cursor, or another MCP host).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import urllib.error
 import urllib.request
 from typing import Any, Optional
@@ -63,7 +67,16 @@ from auth import validate_aat, check_capability, AuthError
 # Configuration
 # ---------------------------------------------------------------------------
 
-WEBAPP_BASE_URL = os.environ.get("WEBAPP_BASE_URL", "http://localhost:8000").rstrip("/")
+# When WEBAPP_BASE_URL is set the MCP server forwards requests to the web
+# server's JSON API (demonstrating a real microservice topology).
+# When it is NOT set the server falls back to importing data.py directly —
+# which is all you need for the CLI demo (main.py) without running webapp.py.
+WEBAPP_BASE_URL = os.environ.get("WEBAPP_BASE_URL", "").rstrip("/")
+
+_USE_HTTP = bool(WEBAPP_BASE_URL)
+
+if not _USE_HTTP:
+    from data import get_emails_for_user, get_all_emails, USERS
 
 # ---------------------------------------------------------------------------
 # Audit log (immutable append-only, mirrors AIP spec requirement)
@@ -169,52 +182,46 @@ TOOLS = [
 
 def _enforce_and_run(tool_name: str, args: dict) -> Any:
     """
-    AIP Layer 2 enforcement gate, then delegate to the webapp JSON API.
+    AIP Layer 2 enforcement gate.
 
-    Steps:
-      1. Validate the AAT locally (signature + expiry + revocation)
-      2. Check required capabilities locally (fast-fail before HTTP)
-      3. Forward the AAT to the webapp API as a Bearer token
-         — the webapp re-enforces policy independently
-      4. Audit the decision
-      5. Return the result
+    When WEBAPP_BASE_URL is set:  forwards to the webapp JSON API (microservice mode).
+    When not set:                 reads data.py directly (standalone / CLI demo mode).
     """
     aat = args.get("aat", "")
     agent_id = "<unknown>"
 
     try:
-        # Step 1 — local AAT validation
+        # Step 1 — local AAT validation (always)
         claims = validate_aat(aat)
         agent_id = claims.get("agent_id", "<unknown>")
         user_id = claims.get("sub")
 
         if tool_name == "list_my_emails":
-            # Step 2 — local capability check (avoids unnecessary HTTP round-trip)
             check_capability(claims, "read:own_emails")
 
-            # Step 3 — delegate to webapp API
-            result = _api_get("/api/emails/mine", aat)
+            if _USE_HTTP:
+                result = _api_get("/api/emails/mine", aat)
+            else:
+                user = USERS.get(user_id, {})
+                emails = get_emails_for_user(user.get("email", ""))
+                result = {"emails": emails, "count": len(emails)}
 
-            # Step 4 — audit allow
             _audit("tool_call", agent_id, tool_name, "allow", f"user={user_id}")
-
-            # Step 5 — return
             return result
 
         elif tool_name == "list_all_emails":
-            # Step 2 — local capability + role check
             check_capability(claims, "read:all_emails")
             role = claims.get("role")
             if role != "admin":
                 raise AuthError(f"role '{role}' is not permitted to list all emails")
 
-            # Step 3 — delegate to webapp API
-            result = _api_get("/api/emails/all", aat)
+            if _USE_HTTP:
+                result = _api_get("/api/emails/all", aat)
+            else:
+                emails = get_all_emails()
+                result = {"emails": emails, "count": len(emails)}
 
-            # Step 4 — audit allow
             _audit("tool_call", agent_id, tool_name, "allow", f"role={role}")
-
-            # Step 5 — return
             return result
 
         else:
