@@ -507,7 +507,7 @@ async def mcp_sse(request: Request):
                 if await request.is_disconnected():
                     break
                 try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    msg = await asyncio.wait_for(queue.get(), timeout=2.0)
                     yield f"data: {json.dumps(msg)}\n\n"
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"  # keepalive comment
