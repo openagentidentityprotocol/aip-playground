@@ -59,7 +59,7 @@ Go to **http://localhost:8000** and log in with one of the demo accounts:
 
 ## Tutorial 3 — Connect Claude Desktop (or Cursor)
 
-`webapp.py` exposes an MCP server at `GET /mcp` (SSE transport) alongside the
+`webapp.py` exposes an MCP server at `GET /aip-playground-mcp` (SSE transport) alongside the
 browser UI. Claude connects to it via URL — no subprocess, no extra process to manage.
 
 ### The full AIP flow Claude will follow
@@ -227,3 +227,249 @@ In this mode enforcement runs **twice**: once locally in the MCP server
 (fast-fail), and again in the web server (authoritative). The web server
 trusts nothing — it re-validates the AAT on every request regardless of
 who called it.
+
+---
+
+## Tutorial 6 — External enforcement with aip-go
+
+Use the [aip-go](https://github.com/openagentidentityprotocol/aip-go) proxy to wrap
+`mcp_server_plain.py` with AIP Layer 2 enforcement — from Cursor, Claude Desktop, or
+the command line. The Python server handles data only; the Go proxy handles policy.
+
+```
+AI Client (Cursor / Claude Desktop / CLI)
+  │  stdio JSON-RPC
+  ▼
+aip-go proxy         ← Layer 2: tool allowlist, role rules, audit log
+  │  stdio JSON-RPC
+  ▼
+mcp_server_plain.py  ← data only, zero enforcement
+  │
+  ▼
+data.py              ← in-memory email store
+```
+
+### Why `mcp_server_plain.py`?
+
+`mcp_server_plain.py` accepts `user_id` directly — no AAT, no token validation, no role
+checks. It is the correct target for an external proxy. `mcp_server.py` already bundles
+AIP internally; wrapping it with aip-go would enforce policy twice.
+
+| Server | Enforcement | Use with |
+|---|---|---|
+| `mcp_server_plain.py` | None — data only | aip-go proxy |
+| `mcp_server.py` | Bundled Layer 1 + 2 | Standalone CLI demo |
+
+---
+
+### Step 1 — Build aip-go
+
+```bash
+git clone https://github.com/openagentidentityprotocol/aip-go
+cd aip-go
+make build
+# binary at: ./bin/aip
+```
+
+Note the full path to the binary — you'll need it in every config below.
+
+---
+
+### Step 2 — Create a policy file
+
+Save this to `~/.config/aip/playground-policy.yaml`:
+
+```yaml
+apiVersion: aip.io/v1alpha1
+kind: AgentPolicy
+metadata:
+  name: playground-policy
+spec:
+  mode: enforce
+  allowed_tools:
+    - list_my_emails
+    - list_all_emails
+  tool_rules:
+    - tool: list_all_emails
+      action: ask   # prompt for approval before running
+```
+
+This policy:
+- **allows** `list_my_emails` silently
+- **prompts** before `list_all_emails` (admin-level read)
+- **blocks** any other tool not in `allowed_tools`
+
+Change `action: ask` to `action: block` to deny admin reads outright, or remove the rule
+to allow silently.
+
+---
+
+### Step 3 — Test from the command line
+
+Verify the proxy works before wiring it into a client.
+
+**Pipe a single request:**
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' | \
+  /path/to/aip-go/bin/aip \
+  --policy ~/.config/aip/playground-policy.yaml \
+  --target "python3 /path/to/sample-application/mcp_server_plain.py" \
+  --verbose
+```
+
+**Interactive session via named pipes:**
+
+```bash
+# Terminal 1 — start the proxy
+mkfifo /tmp/aip_in /tmp/aip_out
+/path/to/aip-go/bin/aip \
+  --policy ~/.config/aip/playground-policy.yaml \
+  --target "python3 /path/to/sample-application/mcp_server_plain.py" \
+  --verbose \
+  < /tmp/aip_in > /tmp/aip_out &
+cat /tmp/aip_out &
+
+# Terminal 2 — send JSON-RPC messages
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' > /tmp/aip_in
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' > /tmp/aip_in
+echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_my_emails","arguments":{"user_id":"alice"}}}' > /tmp/aip_in
+```
+
+Expected: `list_my_emails` returns Alice's emails. Try a blocked tool:
+
+```bash
+echo '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nonexistent_tool","arguments":{}}}' > /tmp/aip_in
+```
+
+Expected: error response with code `-32001` (policy denied).
+
+**View the audit log:**
+
+```bash
+# All decisions
+cat aip-audit.jsonl | jq '.'
+
+# Blocked calls only
+cat aip-audit.jsonl | jq 'select(.decision == "BLOCK")'
+
+# Tool call summary
+cat aip-audit.jsonl | jq -r '.tool' | sort | uniq -c | sort -rn
+```
+
+---
+
+### Step 4 — Connect Cursor
+
+**Generate the config entry automatically:**
+
+```bash
+/path/to/aip-go/bin/aip --generate-cursor-config \
+  --policy ~/.config/aip/playground-policy.yaml \
+  --target "python3 /path/to/sample-application/mcp_server_plain.py"
+```
+
+Copy the output and paste it into `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your
+project root). It will look like:
+
+```json
+{
+  "mcpServers": {
+    "aip-playground": {
+      "command": "/path/to/aip-go/bin/aip",
+      "args": [
+        "--policy", "/Users/<you>/.config/aip/playground-policy.yaml",
+        "--target", "python3 /path/to/sample-application/mcp_server_plain.py"
+      ]
+    }
+  }
+}
+```
+
+Restart Cursor. The `aip-playground` server should appear in the MCP panel.
+
+**Try it in Cursor:**
+
+> "List alice's emails."
+
+Cursor calls `list_my_emails` with `user_id=alice` → aip-go checks the allowlist →
+forwards to `mcp_server_plain.py` → returns alice's emails.
+
+> "List all emails."
+
+Cursor calls `list_all_emails` → aip-go triggers the `action: ask` rule → a native OS
+dialog appears asking you to approve or deny. Approve → emails returned. Deny →
+`-32001` error reported to Cursor.
+
+---
+
+### Step 5 — Connect Claude Desktop
+
+Add to your Claude Desktop config manually:
+
+| OS | Config path |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+```json
+{
+  "mcpServers": {
+    "aip-playground": {
+      "command": "/path/to/aip-go/bin/aip",
+      "args": [
+        "--policy", "/Users/<you>/.config/aip/playground-policy.yaml",
+        "--target", "python3 /path/to/sample-application/mcp_server_plain.py"
+      ]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. Start a conversation:
+
+> "Using aip-playground tools, list emails for alice."
+
+Claude calls `list_my_emails` → aip-go enforces → data returned.
+
+> "Now list all emails."
+
+Claude calls `list_all_emails` → `action: ask` dialog fires. The playground policy
+requires human approval for admin reads even when Claude is the caller.
+
+---
+
+### Step 6 — Monitor mode (dry run)
+
+To test a policy without actually blocking anything, change `mode: enforce` to
+`mode: monitor` in `playground-policy.yaml`. All calls pass through; violations are
+logged but not blocked. Useful for validating a new policy before enabling enforcement.
+
+```yaml
+spec:
+  mode: monitor   # was: enforce
+  ...
+```
+
+---
+
+### Troubleshooting
+
+| Issue | Fix |
+|---|---|
+| `Policy file not found` | Use an absolute path to `playground-policy.yaml` |
+| `Empty response from proxy` | Run the `--target` command on its own to verify it works |
+| `Permission denied` | `chmod +x /path/to/aip-go/bin/aip` |
+| `action: ask` auto-denies | Expected in headless/CI — use `action: allow` for automation |
+| `-32001` on allowed tool | Check spelling in `allowed_tools` matches `tools/list` output |
+
+Enable `--verbose` and redirect stderr to a file for full message flow:
+
+```bash
+/path/to/aip-go/bin/aip \
+  --policy ~/.config/aip/playground-policy.yaml \
+  --target "python3 /path/to/sample-application/mcp_server_plain.py" \
+  --verbose 2>aip-debug.log
+```
+
+See **[implementation.md](implementation.md)** for Docker and Kubernetes deployment patterns.

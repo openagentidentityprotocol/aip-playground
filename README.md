@@ -54,7 +54,13 @@ agent paths: stdio MCP, HTTP Bearer API, and MCP-over-HTTP/SSE.
 ├── main.py               CLI demo — runs all four scenarios
 ├── webapp.py             FastAPI web UI + JSON API + MCP over HTTP/SSE
 ├── requirements.txt      Web UI dependencies
+├── requirements-dev.txt  Test dependencies (pytest, httpx)
 ├── tutorials.md          Step-by-step walkthroughs
+├── tests/                Test suite (94 tests)
+│   ├── test_auth.py      AIP Layer 1 + Layer 2 unit tests
+│   ├── test_data.py      Data store unit tests
+│   ├── test_mcp.py       stdio MCP server + plain server integration tests
+│   └── test_webapp.py    Browser routes, JSON API, MCP dispatch tests
 └── audit.jsonl           Created at runtime; one JSON line per event
 ```
 
@@ -202,7 +208,7 @@ MCP-HTTP agent → authenticate tool       → issue_aat() [Layer 1]
 
 ### The MCP server calls the web server
 
-`mcp_server.py` no longer imports `data.py` directly. It forwards the agent's AAT to the web server's JSON API as a Bearer token, and the web server returns the data.
+`mcp_server.py` has two operating modes. In **microservice mode** (`WEBAPP_BASE_URL` set), it forwards the agent's AAT to the web server's JSON API as a Bearer token and does not read `data.py` directly. In **standalone mode** (no `WEBAPP_BASE_URL`), it imports `data.py` directly — this is what `main.py` uses with no web server running.
 
 ```
 AI Agent
@@ -252,8 +258,11 @@ Set `WEBAPP_BASE_URL` to point the MCP server at any deployed instance of `webap
 This sample is a Python illustration of the concepts in
 [aip-v1alpha1.md](https://github.com/openagentidentityprotocol/agentidentityprotocol/blob/main/spec/aip-v1alpha1.md).
 
-The Go reference proxy at
-[`implementations/go-proxy`](https://github.com/openagentidentityprotocol/agentidentityprotocol/tree/main/implementations/go-proxy)
+The Go reference proxy [aip-go](https://github.com/openagentidentityprotocol/aip-go)
 wraps *any* MCP server and handles Layer 2 enforcement externally.
 This demo bundles both layers into a single Python process to keep
 the example self-contained and easy to follow.
+
+See **[implementation.md](implementation.md)** for a step-by-step guide to connecting
+aip-go to this playground's `mcp_server_plain.py` from Cursor, Claude Desktop, or the
+command line.

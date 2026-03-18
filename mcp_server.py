@@ -38,7 +38,7 @@ independently.
 
 Configuration
 -------------
-Set WEBAPP_BASE_URL to wherever webapp.py is running (default: localhost:8000).
+Set WEBAPP_BASE_URL to wherever webapp.py is running (default: empty — standalone mode).
 
     export WEBAPP_BASE_URL=http://localhost:8000
     python3 mcp_server.py
@@ -258,7 +258,7 @@ def handle_request(req: dict) -> Optional[dict]:
         return _ok(
             rid,
             {
-                "protocolVersion": "1984-11-11",
+                "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {
                     "name": "aip-email-server",
