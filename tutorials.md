@@ -267,8 +267,7 @@ AIP internally; wrapping it with aip-go would enforce policy twice.
 ```bash
 git clone https://github.com/openagentidentityprotocol/aip-go
 cd aip-go
-make build
-# binary at: ./bin/aip
+make build 
 ```
 
 Note the full path to the binary — you'll need it in every config below.
@@ -317,6 +316,18 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
   --target "python3 /path/to/sample-application/mcp_server_plain.py" \
   --verbose
 ```
+
+To use the demo folder and if running in the top level directory:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' | \
+  ./demo/aip-proxy \
+  --policy ./demo/playground-policy.yaml \
+  --target "python3 mcp_server_plain.py" \
+  --verbose
+```
+
+
 
 **Interactive session via named pipes:**
 
@@ -370,21 +381,37 @@ cat aip-audit.jsonl | jq -r '.tool' | sort | uniq -c | sort -rn
 ```
 
 Copy the output and paste it into `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your
-project root). It will look like:
+project root) then modify the name as you see fit. It will look like:
+
+```json
+{
+  "mcpServers": {
+    "protected-tool": {
+      "args": [
+        "--policy", "/Users/<you>/.config/aip/playground-policy.yaml",
+        "--target", "python3 /path/to/sample-application/mcp_server_plain.py"
+      ],
+      "command": "/path/to/bin/aip-proxy"
+    }
+  }
+}
+```
+So something in prod would look like:
 
 ```json
 {
   "mcpServers": {
     "aip-playground": {
-      "command": "/path/to/aip-go/bin/aip",
       "args": [
         "--policy", "/Users/<you>/.config/aip/playground-policy.yaml",
         "--target", "python3 /path/to/sample-application/mcp_server_plain.py"
-      ]
+      ],
+       "command": "/path/to/bin/aip-proxy"
     }
   }
 }
 ```
+
 
 Restart Cursor. The `aip-playground` server should appear in the MCP panel.
 
